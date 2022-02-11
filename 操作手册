@@ -1,0 +1,158 @@
+==Kerberos安装部署==
+x.x.x.x   DSJ-YZWK-HX01           
+x.x.x.x   DSJ-YZWK-HX02           
+x.x.x.x   DSJ-YZWK-HX03           
+x.x.x.x   DSJ-YZWK-HX04           
+x.x.x.x   DSJ-YZWK-HX05           
+x.x.x.x   DSJ-YZWK-HX06
+
+1.CM节点安装KDC
+yum -y install krb5-libs krb5-server krb5-workstation
+
+1) 配置 /etc/krb5.conf
+[root@DSJ-YZWK-HX01 etc]# cat krb5.conf 
+[logging]
+ default = FILE:/var/log/krb5libs.log
+ kdc = FILE:/var/log/krb5kdc.log
+ admin_server = FILE:/var/log/kadmind.log
+
+[libdefaults]
+default_realm = FAYSON.COM
+dns_lookup_realm = false
+dns_lookup_kdc = false
+ticket_lifetime = 24h
+renew_lifetime = 7d
+forwardable = true
+udp_preference_limit = 1
+
+[realms]
+ EXAMPLE.COM = {
+  kdc = DSJ-YZWK-HX01
+  admin_server = DSJ-YZWK-HX01
+ }
+
+[domain_realm]
+ .DSJ-YZWK-HX01 = EXAMPLE.COM
+ DSJ-YZWK-HX01 = EXAMPLE.COM
+
+2)	配置 /var/kerberos/krb5kdc/kadm5.acl
+*/admin@FAYSON.COM *
+
+3) 配置	/var/kerberos/krb5kdc/kdc.conf
+[root@ip-172-31-6-148 ~]# vim /var/kerberos/krb5kdc/kdc.conf 
+[kdcdefaults]
+kdc_ports = 88
+kdc_tcp_ports = 88
+
+[realms]
+FAYSON.COM= {
+#master_key_type = aes256-cts
+max_renewable_life= 7d 0h 0m 0s
+acl_file = /var/kerberos/krb5kdc/kadm5.acl
+dict_file = /usr/share/dict/words
+admin_keytab = /var/kerberos/krb5kdc/kadm5.keytab
+supported_enctypes = aes256-cts:normal aes128-cts:normal des3-hmac-sha1:normal arcfour-hmac:normal des-hmac-sha1:n
+ormal des-cbc-md5:normal des-cbc-crc:normal
+}
+
+4)	创建Kerberos数据库 
+kdb5_util create -r FAYSON.COM -s
+密码:123456
+
+5) 启动 kerberos 和 kadmin服务
+
+
+5)	创建Kerberos的管理账号
+[root@ip-172-31-6-148 ~]# kadmin.local
+Authenticating as principal fayson/admin@CLOUDERA.COM with password.
+kadmin.local: addprinc admin/admin@FAYSON.COM
+WARNING: no policy specified for admin/admin@FAYSON.COM; defaulting to no policy
+Enter password for principal "admin/admin@FAYSON.COM": 
+Re-enter password for principal "admin/admin@FAYSON.COM": 
+Principal "admin/admin@FAYSON.COM" created.
+kadmin.local: exit
+[root@ip-172-31-6-148 ~]# 
+
+
+===并启动krb5kdc和kadmin服务
+systemctl enable  krb5kdc.service
+systemctl enable kadmin.service
+
+systemctl restart kadmin.service
+systemctl restart  krb5kdc.service 
+
+=====测试Kerberos的管理员账号
+[root@ip-172-31-6-148 ~]# kinit admin/admin@FAYSON.COM
+Password for admin/admin@FAYSON.COM: 
+[root@ip-172-31-6-148 ~]# klist
+Ticket cache: FILE:/tmp/krb5cc_0
+Default principal: admin/admin@FAYSON.COM
+
+Valid starting Expires Service principal
+09/05/17 16:39:17 09/06/17 16:39:17 krbtgt/FAYSON.COM@FAYSON.COM
+renew until 09/12/17 16:39:17
+[root@ip-172-31-6-148 ~]#
+
+
+====安装kerberos客户端
+yum -y install krb5-libs krb5-workstation
+==CM单独需求包
+yum -y install openldap-clients		
+
+===将KDC Server上的krb5.conf文件拷贝到所有Kerberos客户端
+
+===在KDC中给Cloudera Manager添加管理员账号
+[root@ip-172-31-6-148 cdh-shell-bak]# kadmin.local
+Authenticating as principal admin/admin@FAYSON.COM with password.
+kadmin.local: addprinc cloudera-scm/admin@FAYSON.COM
+WARNING: no policy specified for cloudera-scm/admin@FAYSON.COM; defaulting to no policy
+Enter password for principal "cloudera-scm/admin@FAYSON.COM": 
+Re-enter password for principal "cloudera-scm/admin@FAYSON.COM": 
+Principal "cloudera-scm/admin@FAYSON.COM" created.
+kadmin.local: exit
+[root@ip-172-31-6-148 cdh-shell-bak]#
+
+===CDH集群启用Kerberos
+cloudera-scm/admin@FAYSON.COM			---123456
+
+=测试
+kinit cloudera-scm/admin@FAYSON.COM	
+
+==ERROR
+Could not configure server because SASL configuration did not allow the  
+ZooKeeper server to authenticate itself properly: 
+javax.security.auth.login.LoginException: No password provided
+
+kadmin.local
+Authenticating as principal fayson/admin@CLOUDERA.COM with password.
+kadmin.local: addprinc zookeeper/admin@FAYSON.COM
+
+keytab 不存在。
+ktadd -k /var/kerberos/krb5kdc/krb5.keytab cloudera-scm/admin@FAYSON.COM	
+xst -norandkey -k /var/kerberos/krb5kdc/keytab/cloudera-scm.keytab cloudera-scm/admin@FAYSON.COM admin/admin@FAYSON.COM
+xst -k zookeeper-unmerged.keytab zookeeper/admin@FAYSON.COM
+
+xst -norandkey -k /var/kerberos/krb5kdc/keytab/root.keytab root/master1@JENKIN.COM host/master1@JENKIN.COM　
+ktadd -k /var/kerberos/krb5kdc/krb5.keytab cloudera-scm/admin@FAYSON.COM
+kinit -k -t /var/kerberos/krb5kdc/krb5.keytab cloudera-scm/admin@FAYSON.COM 
+klist -e -k -t /var/kerberos/krb5kdc/krb5.keytab
+
+x.x.x.x   dsj-yzwk-hx06
+x.x.x.x   dsj-yzwk-hx07
+x.x.x.x   dsj-yzwk-hx08
+x.x.x.x   dsj-yzwk-hx09
+x.x.x.x   dsj-yzwk-hx10
+
+
+====kerberos使用
+addprinc fayson@FAYSON.COM
+
+kdestroy
+kinit fayson
+====New Kerberos===
+==hive
+!connect jdbc:hive2://localhost:10000/;principal=hive/dsj-yzwk-hx11@FAYSON.COM
+
+
+
+
